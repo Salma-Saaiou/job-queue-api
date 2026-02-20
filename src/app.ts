@@ -4,6 +4,7 @@ import { registerErrorHandler } from "./shared/errors/error.handler";
 import { authRoutes } from "./modules/auth/auth.routes";
 import { env } from "./config/env";
 import { logger } from "./config/logger";
+import { jobsRoutes } from "./modules/jobs";
 
 const app = Fastify({
   // logger: env.NODE_ENV === "development",
@@ -20,6 +21,7 @@ registerErrorHandler(app);
 
 // Register routes
 app.register(authRoutes, { prefix: "/api/auth" });
+app.register(jobsRoutes, { prefix: "/api/jobs" });
 
 // Health check
 app.get("/health", async () => {

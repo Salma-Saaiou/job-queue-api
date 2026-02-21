@@ -1,0 +1,366 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Job Queue Dashboard</title>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <style>
+      body {
+        font-family: Arial;
+        padding: 20px;
+        background: #1a1a1a;
+        color: #fff;
+      }
+      .container {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 20px;
+      }
+      .stats {
+        background: #2d2d2d;
+        padding: 20px;
+        border-radius: 10px;
+      }
+      .feed {
+        background: #2d2d2d;
+        padding: 20px;
+        border-radius: 10px;
+        height: 500px;
+        overflow-y: scroll;
+      }
+      .job {
+        padding: 10px;
+        margin: 5px 0;
+        border-radius: 5px;
+        animation: slideIn 0.3s;
+      }
+      .pending {
+        background: #856404;
+      }
+      .processing {
+        background: #004085;
+      }
+      .completed {
+        background: #155724;
+      }
+      .failed {
+        background: #721c24;
+      }
+      .dead {
+        background: #333;
+      }
+      @keyframes slideIn {
+        from {
+          transform: translateX(-20px);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+      .connected {
+        color: #00ff00;
+      }
+      .disconnected {
+        color: #ff0000;
+      }
+      input {
+        padding: 8px;
+        width: 300px;
+        margin: 10px 0;
+      }
+      button {
+        padding: 8px 16px;
+        background: #007bff;
+        color: white;
+        border: none;
+        cursor: pointer;
+      }
+      .error {
+        color: #ff6b6b;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>📊 Job Queue Real-time Dashboard</h1>
+
+    <div>
+      <input type="text" id="tokenInput" placeholder="Enter your JWT token" />
+      <button onclick="connectWebSocket()">Connect</button>
+      <button onclick="testConnection()">Test Connection</button>
+    </div>
+    <div
+      style="
+        margin: 20px 0;
+        padding: 20px;
+        background: #2d2d2d;
+        border-radius: 10px;
+      "
+    >
+      <h3>➕ Create Test Job</h3>
+      <select id="jobType">
+        <option value="send-email">Send Email</option>
+        <option value="process-data">Process Data</option>
+        <option value="resize-image">Resize Image</option>
+      </select>
+      <input
+        type="text"
+        id="jobPayload"
+        placeholder='{"to":"test@example.com"}'
+        value='{"to":"test@example.com","subject":"Hello"}'
+        style="width: 400px"
+      />
+      <input
+        type="number"
+        id="jobPriority"
+        placeholder="Priority"
+        value="5"
+        min="0"
+        max="100"
+        style="width: 80px"
+      />
+      <button onclick="createJob()">Create Job</button>
+    </div>
+
+    <div id="status" class="disconnected">🔴 Disconnected</div>
+    <div id="error-message" class="error"></div>
+
+    <button onclick="fetchStats()" style="margin-left: 10px">
+      🔄 Refresh Stats
+    </button>
+
+    <div class="container">
+      <div class="stats">
+        <h2>Queue Stats</h2>
+        <div>🟡 PENDING: <span id="pending">0</span></div>
+        <div>🔵 PROCESSING: <span id="processing">0</span></div>
+        <div>🟢 COMPLETED: <span id="completed">0</span></div>
+        <div>🔴 FAILED: <span id="failed">0</span></div>
+        <div>⚫ DEAD: <span id="dead">0</span></div>
+        <div>📊 TOTAL: <span id="total">0</span></div>
+        <div>🔌 WS Connections: <span id="connections">0</span></div>
+      </div>
+
+      <div class="feed">
+        <h2>Live Job Feed</h2>
+        <div id="job-feed"></div>
+      </div>
+    </div>
+
+    <script>
+      const BASE_URL = "http://localhost:8080";
+      let socket = null;
+      let token = "";
+      let reconnectAttempts = 0;
+      const maxReconnectAttempts = 5;
+
+      async function testConnection() {
+        try {
+          const response = await fetch(`${BASE_URL}/health`);
+          const data = await response.json();
+          alert(`Server is running!\n${JSON.stringify(data, null, 2)}`);
+          console.log("Server health:", data);
+        } catch (error) {
+          alert(
+            "Cannot connect to server. Make sure it's running on port 8080",
+          );
+          console.error("Connection test failed:", error);
+        }
+      }
+
+      function connectWebSocket() {
+        token = document.getElementById("tokenInput").value.trim();
+
+        if (!token) {
+          alert("Please enter your JWT token");
+          return;
+        }
+
+        // Clear error message
+        document.getElementById("error-message").innerHTML = "";
+
+        // Disconnect existing socket
+        if (socket) {
+          socket.disconnect();
+        }
+
+        // Connect with token using polling first, then upgrade to websocket
+        socket = io(BASE_URL, {
+          auth: { token },
+          transports: ["polling", "websocket"], // Start with polling, then upgrade
+          reconnection: true,
+          reconnectionAttempts: maxReconnectAttempts,
+          reconnectionDelay: 1000,
+          reconnectionDelayMax: 5000,
+          timeout: 20000,
+          forceNew: true,
+        });
+
+        socket.on("connect", () => {
+          console.log("Connected successfully!");
+          document.getElementById("status").innerHTML = "🟢 Connected";
+          document.getElementById("status").className = "connected";
+          reconnectAttempts = 0;
+
+          // Subscribe to jobs
+          socket.emit("subscribe:jobs");
+
+          // Try to subscribe to stats
+          socket.emit("subscribe:stats");
+
+          // Fetch initial stats
+          fetchStats();
+        });
+
+        socket.on("connect_error", (error) => {
+          console.error("Connection error:", error);
+          reconnectAttempts++;
+
+          document.getElementById("status").innerHTML =
+            `🔴 Connection error (Attempt ${reconnectAttempts}/${maxReconnectAttempts})`;
+          document.getElementById("status").className = "disconnected";
+          document.getElementById("error-message").innerHTML =
+            `Error: ${error.message}`;
+
+          // Try to get more details
+          if (error.message.includes("xhr")) {
+            document.getElementById("error-message").innerHTML +=
+              "<br>This might be a CORS issue. Make sure the server allows cross-origin requests.";
+          }
+        });
+
+        socket.on("connected", (data) => {
+          console.log("Connected:", data);
+          document.getElementById("connections").textContent = data.connections;
+        });
+
+        socket.on("subscribed", (data) => {
+          console.log("Subscribed to:", data.room);
+        });
+
+        socket.on("job:created", (data) => {
+          addJobToFeed("🆕 NEW JOB", data);
+          fetchStats();
+        });
+
+        socket.on("job:updated", (data) => {
+          addJobToFeed("📝 JOB UPDATED", data);
+          fetchStats();
+        });
+
+        socket.on("stats:updated", (data) => {
+          updateStats(data.data);
+        });
+
+        socket.on("disconnect", (reason) => {
+          console.log("Disconnected:", reason);
+          document.getElementById("status").innerHTML = "🔴 Disconnected";
+          document.getElementById("status").className = "disconnected";
+
+          if (reason === "io server disconnect") {
+            // Server disconnected, reconnect manually
+            setTimeout(connectWebSocket, 1000);
+          }
+        });
+      }
+
+      async function createJob() {
+        const type = document.getElementById("jobType").value;
+        const payload = JSON.parse(
+          document.getElementById("jobPayload").value || "{}",
+        );
+        const priority =
+          parseInt(document.getElementById("jobPriority").value) || 5;
+
+        try {
+          const response = await fetch(`${BASE_URL}/api/jobs`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              type,
+              payload,
+              priority,
+            }),
+          });
+
+          const data = await response.json();
+          if (data.success) {
+            alert("✅ Job created successfully!");
+            // Add to feed immediately
+            addJobToFeed("🆕 JOB CREATED", {
+              data: data.data,
+              timestamp: new Date().toISOString(),
+            });
+          } else {
+            alert("❌ Failed to create job: " + data.message);
+          }
+        } catch (error) {
+          console.error("Failed to create job:", error);
+          alert("❌ Error creating job: " + error.message);
+        }
+      }
+
+      function addJobToFeed(title, data) {
+        console.log(data);
+        const feed = document.getElementById("job-feed");
+        const jobDiv = document.createElement("div");
+        jobDiv.className = `job ${data.data.status.toLowerCase()}`;
+        jobDiv.innerHTML = `
+                <strong>${title}</strong><br>
+                ID: ${data.data.id.substring(0, 8)}...<br>
+                Type: ${data.data.type}<br>
+                Status: ${data.data.status}<br>
+                Attempts: ${data.data.attempts}/${data.data.maxAttempts}<br>
+                ${data.data.error ? `Error: ${data.data.error}<br>` : ""}
+                Time: ${new Date(data.timestamp).toLocaleTimeString()}
+            `;
+        feed.prepend(jobDiv);
+
+        // Keep only last 50 jobs
+        while (feed.children.length > 50) {
+          feed.removeChild(feed.lastChild);
+        }
+      }
+
+      async function fetchStats() {
+        try {
+          const response = await fetch(`${BASE_URL}/api/jobs/stats`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+          });
+          console.log("object", response);
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          const data = await response.json();
+          if (data.success) {
+            updateStats(data.data);
+          }
+        } catch (error) {
+          console.error("Failed to fetch stats:", error);
+        }
+      }
+
+      function updateStats(stats) {
+        document.getElementById("pending").textContent = stats.pending || 0;
+        document.getElementById("processing").textContent =
+          stats.processing || 0;
+        document.getElementById("completed").textContent = stats.completed || 0;
+        document.getElementById("failed").textContent = stats.failed || 0;
+        document.getElementById("dead").textContent = stats.dead || 0;
+        document.getElementById("total").textContent = stats.totalJobs || 0;
+      }
+
+      // Auto-test connection on load
+      window.onload = function () {
+        testConnection();
+      };
+    </script>
+  </body>
+</html>

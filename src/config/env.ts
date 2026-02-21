@@ -17,7 +17,7 @@ const envSchema = z.object({
     .string()
     .transform(Number)
     .pipe(z.number().int().positive())
-    .default(3000),
+    .default(8080),
   HOST: z.string().default("0.0.0.0"),
 
   // JWT

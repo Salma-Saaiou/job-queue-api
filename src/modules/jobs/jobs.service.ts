@@ -30,6 +30,10 @@ export class JobsService {
       },
     });
 
+    if ((global as any).app?.realtime) {
+      (global as any).app.realtime.emitNewJob(userId, job);
+    }
+
     return this.formatJobResponse(job);
   }
 

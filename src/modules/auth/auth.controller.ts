@@ -90,7 +90,6 @@ export class AuthController {
   }
 
   async getMe(request: FastifyRequest, reply: FastifyReply) {
-    console.log(request.user);
     const userId = request.user!.userId;
     const user = await authService.getUserById(userId);
 

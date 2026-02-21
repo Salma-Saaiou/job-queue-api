@@ -16,7 +16,7 @@ handlers.set("send-email", async (payload: any) => {
 handlers.set("process-data", async (payload: any) => {
   console.log("📊 Processing data:", payload);
   // Simulate work
-  await new Promise((resolve) => setTimeout(resolve, 3000));
+  await new Promise((resolve) => setTimeout(resolve, 8080));
 
   // Simulate random failure (20% chance)
   if (Math.random() < 0.2) {
@@ -40,7 +40,7 @@ handlers.set("resize-image", async (payload: any) => {
 // Create and start worker
 const worker = new JobWorker({
   workerId: `worker-${randomUUID().substring(0, 8)}`,
-  pollInterval: 3000, // Poll every 3 seconds
+  pollInterval: 8080, // Poll every 3 seconds
   maxConcurrent: 3, // Process 3 jobs at once
   handlers,
 });
